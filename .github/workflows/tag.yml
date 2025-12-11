@@ -20,6 +20,13 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          sudo apt-get clean
+          docker system prune -af || true
+          df -h
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
