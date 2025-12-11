@@ -1,0 +1,77 @@
+name: Tag
+
+concurrency:
+  group: splatter-server-tag-${{ github.ref_name }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  AWS_REGION: ${{ vars.GLOBAL_COMMON_AWS_REGION }}
+  IMAGE_NAME: splatter-server
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.GLOBAL_COMMON_AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.GLOBAL_COMMON_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (linux/amd64 only)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta.outputs.tags }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Authenticate ArgoCD
+        uses: clowdhaus/argo-cd-action@v2.3.0
+        with:
+          command: login
+          options: --username admin --password "${{ secrets.GLOBAL_DEV_ARGOCD_PASSWORD }}" --grpc-web argocd.dev.aukiverse.com:443
+
+      - name: Sync ArgoCD app
+        uses: clowdhaus/argo-cd-action@v2.3.0
+        with:
+          command: app sync "splatter-server"
+          options: --grpc-web --async
+
+      - name: Restart ArgoCD app
+        uses: clowdhaus/argo-cd-action@v2.3.0
+        with:
+          command: app actions run "splatter-server" restart
+          options: --kind "Deployment" --grpc-web

@@ -1,0 +1,15 @@
+[package]
+name = "splatter-bin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0.95"
+axum = "0.7.5"
+dotenvy = "0.15"
+tokio = { version = "1.44.2", features = ["full"] }
+tracing = "0.1.40"
+
+posemesh-compute-node = { version = "=0.1.16" }
+splatter-runner = { path = "../runner" }
