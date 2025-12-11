@@ -60,7 +60,10 @@ impl compute_runner_api::Runner for HelloRunner {
         let mut colmap_refs: HashMap<String, (String, String)> = HashMap::new();
         let mut domain_base_from_input: Option<String> = None;
         let mut domain_id_from_input: Option<String> = None;
-        let job_root = PathBuf::from("tasks").join(lease.task.id.to_string());
+        // Resolve task workspace root; default is relative "tasks" for local dev,
+        // but Docker image sets TASKS_ROOT=/app/tasks to avoid cwd/permission issues.
+        let task_root = env::var("TASKS_ROOT").unwrap_or_else(|_| "tasks".to_string());
+        let job_root = PathBuf::from(task_root).join(lease.task.id.to_string());
         tokio::fs::create_dir_all(&job_root)
             .await
             .with_context(|| format!("create job root {}", job_root.display()))?;
