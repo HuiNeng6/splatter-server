@@ -5,11 +5,16 @@ use posemesh_compute_node::telemetry;
 use posemesh_compute_node_runner_api as compute_runner_api;
 use posemesh_domain_http::domain_data::{download_by_id, download_metadata_v1, DownloadQuery};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::fs::File;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -446,7 +451,19 @@ impl compute_runner_api::Runner for HelloRunner {
             }))
             .await?;
 
-        let output = Command::new("python3")
+        let logs_dir = job_root.join("logs");
+        tokio::fs::create_dir_all(&logs_dir)
+            .await
+            .with_context(|| format!("create logs dir {}", logs_dir.display()))?;
+        let log_path = logs_dir.join("pipeline.log");
+        let log_path_str = log_path.display().to_string();
+        let log_file = Arc::new(Mutex::new(
+            File::create(&log_path)
+                .await
+                .with_context(|| format!("create {}", log_path.display()))?,
+        ));
+
+        let mut child = Command::new("python3")
             .arg(&run_py)
             .arg("--domain_id")
             .arg(&domain_id_str)
@@ -456,29 +473,102 @@ impl compute_runner_api::Runner for HelloRunner {
             .arg(&job_root)
             .arg("--log_level")
             .arg("info")
+            .env("PYTHONUNBUFFERED", "1")
             .current_dir(&project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .with_context(|| format!("spawn python3 {}", run_py.display()))?
-            .wait_with_output()
-            .await
-            .with_context(|| "wait for python job")?;
+            .with_context(|| format!("spawn python3 {}", run_py.display()))?;
 
-        if !output.status.success() {
+        let start = Instant::now();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("child missing stdout handle"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("child missing stderr handle"))?;
+
+        let mut stdout_reader = BufReader::new(stdout).lines();
+        let mut stderr_reader = BufReader::new(stderr).lines();
+        let mut tail: VecDeque<String> = VecDeque::with_capacity(200);
+
+        // Read both streams concurrently to avoid deadlocks and keep logs structured.
+        let mut stdout_done = false;
+        let mut stderr_done = false;
+        while !stdout_done || !stderr_done {
+            tokio::select! {
+                line = stdout_reader.next_line(), if !stdout_done => {
+                    match line {
+                        Ok(Some(l)) => {
+                            {
+                                let mut f = log_file.lock().await;
+                                let _ = f.write_all(l.as_bytes()).await;
+                                let _ = f.write_all(b"\n").await;
+                            }
+                            if tail.len() == 200 { tail.pop_front(); }
+                            tail.push_back(format!("stdout: {l}"));
+                            info!(line = %l, "python stdout");
+                            let _ = ctx.ctrl.log_event(json!({
+                                "level": "info",
+                                "message": l,
+                                "source": "python_stdout"
+                            })).await;
+                        }
+                        Ok(None) => stdout_done = true,
+                        Err(err) => {
+                            warn!(%err, "failed to read python stdout");
+                            stdout_done = true;
+                        }
+                    }
+                }
+                line = stderr_reader.next_line(), if !stderr_done => {
+                    match line {
+                        Ok(Some(l)) => {
+                            {
+                                let mut f = log_file.lock().await;
+                                let _ = f.write_all(l.as_bytes()).await;
+                                let _ = f.write_all(b"\n").await;
+                            }
+                            if tail.len() == 200 { tail.pop_front(); }
+                            tail.push_back(format!("stderr: {l}"));
+                            warn!(line = %l, "python stderr");
+                            let _ = ctx.ctrl.log_event(json!({
+                                "level": "warn",
+                                "message": l,
+                                "source": "python_stderr"
+                            })).await;
+                        }
+                        Ok(None) => stderr_done = true,
+                        Err(err) => {
+                            warn!(%err, "failed to read python stderr");
+                            stderr_done = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        let status = child.wait().await.with_context(|| "wait for python job")?;
+        let duration = start.elapsed();
+
+        if !status.success() {
+            let summary_tail: Vec<String> = tail.into_iter().collect();
             ctx.ctrl
                 .log_event(json!({
                     "level": "error",
                     "message": "python job failed",
-                    "status": output.status.code(),
-                    "stdout": String::from_utf8_lossy(&output.stdout),
-                    "stderr": String::from_utf8_lossy(&output.stderr),
+                    "status": status.code(),
+                    "duration_ms": duration.as_millis(),
+                    "tail": summary_tail,
+                    "log_path": log_path_str.clone(),
                 }))
                 .await?;
             return Err(anyhow!(
-                "python job failed: status={:?}, stderr={}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr)
+                "python job failed: status={:?}, log={}",
+                status.code(),
+                log_path_str
             ));
         }
 
@@ -486,7 +576,9 @@ impl compute_runner_api::Runner for HelloRunner {
             .log_event(json!({
                 "level": "info",
                 "message": "python job completed",
-                "stdout": String::from_utf8_lossy(&output.stdout),
+                "status": status.code(),
+                "duration_ms": duration.as_millis(),
+                "log_path": log_path_str.clone(),
             }))
             .await?;
 
