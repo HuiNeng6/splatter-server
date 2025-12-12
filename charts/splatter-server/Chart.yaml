@@ -4,5 +4,4 @@ version: 0.0.1
 dependencies:
 - name: splatter-server
   version: 0.1.0
-  repository: https://charts.aukiverse.com
-
+  repository: "file://charts/splatter-server"

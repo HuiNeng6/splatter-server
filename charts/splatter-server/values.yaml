@@ -25,3 +25,4 @@ splatter-server:
       effect: "NoSchedule"
   extraEnvMap:
     RUST_LOG: "info"
+    REQUEST_TIMEOUT_SECS: "30"
