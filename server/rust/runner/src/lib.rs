@@ -19,7 +19,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 /// Capability advertised to DDS/DMS.
-pub const CAPABILITY: &str = "/examples/hello/v1";
+pub const CAPABILITY: &str = "/splatter/colmap/v1";
 
 /// Returns a registry populated with the hello runner.
 pub fn registry() -> RunnerRegistry {

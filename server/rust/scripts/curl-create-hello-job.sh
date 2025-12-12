@@ -10,7 +10,7 @@ TASK_LABEL=${TASK_LABEL:-hello}
 STAGE=${STAGE:-hello}
 BILLING_UNITS=${BILLING_UNITS:-1}
 INPUT_CID=${INPUT_CID:-} # https://domain.dev.aukiverse.com/api/v1/domains/<DOMAIN_ID>/data/<DATA_ID
-CAPABILITY="/examples/hello/v1"
+CAPABILITY="/splatter/colmap/v1"
 
 if [[ -z "$APP_JWT" ]]; then
   echo "error: set APP_JWT to a DDS-signed app token with domain:rw scope" >&2
