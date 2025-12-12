@@ -571,20 +571,29 @@ impl compute_runner_api::Runner for HelloRunner {
             return Err(anyhow!("expected output missing: {}", splat_abs.display()));
         }
 
+        let upload_key = if let Some(suffix) = refined_suffix.as_deref().filter(|s| !s.is_empty()) {
+            if suffix.starts_with('_') {
+                format!("refined_splat{suffix}")
+            } else {
+                format!("refined_splat_{suffix}")
+            }
+        } else {
+            warn!("refined manifest suffix missing; uploading as splat_data without timestamp");
+            "refined_splat".to_string()
+        };
+
         ctx.output
             .put_file(
-                splat_rel
-                    .to_str()
-                    .ok_or_else(|| anyhow!("non-utf8 path for splat file"))?,
+                upload_key.as_str(),
                 &splat_abs,
             )
             .await
-            .with_context(|| format!("upload {}", splat_abs.display()))?;
+            .with_context(|| format!("upload {} as {}", splat_abs.display(), upload_key))?;
 
             ctx.ctrl
                 .progress(json!({
                     "status": "finished",
-                    "uploaded": "refined/splatter/splat_rot.splat",
+                    "uploaded": upload_key,
                     "splat_path": splat_abs,
                 }))
                 .await?;
