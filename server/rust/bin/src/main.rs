@@ -1,7 +1,10 @@
 use anyhow::Result;
 use posemesh_compute_node::engine::RunnerRegistry;
 use posemesh_compute_node::telemetry;
+use std::env;
+use std::path::PathBuf;
 use tracing::info;
+use tracing::warn;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -10,6 +13,25 @@ async fn main() -> Result<()> {
     let _ = dotenvy::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/.env"));
 
     telemetry::init_from_env()?;
+
+    // Best-effort cleanup of any stale task workspaces from previous runs.
+    let task_root = env::var("TASKS_ROOT").unwrap_or_else(|_| "tasks".to_string());
+    let task_root_path = PathBuf::from(&task_root);
+    if let Err(err) = tokio::fs::create_dir_all(&task_root_path).await {
+        warn!(%err, path = %task_root_path.display(), "failed to ensure TASKS_ROOT exists");
+    } else if let Ok(mut rd) = tokio::fs::read_dir(&task_root_path).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let path = entry.path();
+            if let Ok(ft) = entry.file_type().await {
+                if !ft.is_dir() {
+                    continue;
+                }
+            }
+            if let Err(err) = tokio::fs::remove_dir_all(&path).await {
+                warn!(%err, path = %path.display(), "failed to remove stale task workspace");
+            }
+        }
+    }
 
     let app = posemesh_compute_node::http::router();
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;

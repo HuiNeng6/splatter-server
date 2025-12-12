@@ -9,12 +9,9 @@ use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Instant;
-use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -74,25 +71,26 @@ impl compute_runner_api::Runner for HelloRunner {
             .with_context(|| format!("create job root {}", job_root.display()))?;
         let datasets_dir = job_root.join("datasets");
 
-        ctx.ctrl.progress(json!({ "status": "started" })).await?;
+        let task_result: Result<()> = async {
+            ctx.ctrl.progress(json!({ "status": "started" })).await?;
 
-        // If an input CID is provided, materialize it and set up job inputs.
-        let maybe_cid = lease.task.inputs_cids.first().cloned();
-        let expected_colmap = [
-            ("colmap_frames_bin", "frames.bin"),
-            ("colmap_images_bin", "images.bin"),
-            ("colmap_cameras_bin", "cameras.bin"),
-            ("colmap_points3d_bin", "points3D.bin"),
-            ("colmap_rigs_bin", "rigs.bin"),
-        ];
-        let mut datasets_downloaded = 0usize;
+            // If an input CID is provided, materialize it and set up job inputs.
+            let maybe_cid = lease.task.inputs_cids.first().cloned();
+            let expected_colmap = [
+                ("colmap_frames_bin", "frames.bin"),
+                ("colmap_images_bin", "images.bin"),
+                ("colmap_cameras_bin", "cameras.bin"),
+                ("colmap_points3d_bin", "points3D.bin"),
+                ("colmap_rigs_bin", "rigs.bin"),
+            ];
+            let mut datasets_downloaded = 0usize;
 
-        if let Some(cid) = maybe_cid.as_deref() {
-            let materialized = ctx
-                .input
-                .materialize_cid_with_meta(cid)
-                .await
-                .with_context(|| format!("materialize cid {}", cid))?;
+            if let Some(cid) = maybe_cid.as_deref() {
+                let materialized = ctx
+                    .input
+                    .materialize_cid_with_meta(cid)
+                    .await
+                    .with_context(|| format!("materialize cid {}", cid))?;
 
             // Print metadata returned with the CID.
             let metadata_json = json!({
@@ -395,9 +393,9 @@ impl compute_runner_api::Runner for HelloRunner {
                     }
                 }
             }
-        } else {
-            return Err(anyhow!("no input cid provided; cannot run splatter job"));
-        }
+            } else {
+                return Err(anyhow!("no input cid provided; cannot run splatter job"));
+            }
 
         // Ensure at least one dataset is available before running the pipeline.
         let mut datasets_present = datasets_downloaded > 0;
@@ -408,22 +406,22 @@ impl compute_runner_api::Runner for HelloRunner {
                 }
             }
         }
-        if !datasets_present {
-            return Err(anyhow!(
-                "no datasets downloaded; expected at least one dmt_recording_* input"
-            ));
-        }
+            if !datasets_present {
+                return Err(anyhow!(
+                    "no datasets downloaded; expected at least one dmt_recording_* input"
+                ));
+            }
 
         // Run the Python pipeline and upload the splat.
-        let Some(domain_id_str) = lease
-            .domain_id
-            .map(|d| d.to_string())
-            .or(domain_id_from_input.clone())
-        else {
-            return Err(anyhow!(
-                "domain_id missing (task domain_id and input cid domain_id were None)"
-            ));
-        };
+            let Some(domain_id_str) = lease
+                .domain_id
+                .map(|d| d.to_string())
+                .or(domain_id_from_input.clone())
+            else {
+                return Err(anyhow!(
+                    "domain_id missing (task domain_id and input cid domain_id were None)"
+                ));
+            };
 
         let job_id_str = lease.task.job_id.map(|j| j.to_string()).unwrap_or_else(|| {
             // Fallback to task id so the script always has a value.
@@ -443,25 +441,13 @@ impl compute_runner_api::Runner for HelloRunner {
             .map(PathBuf::from)
             .unwrap_or_else(|| exe_dir.clone());
 
-        ctx.ctrl
-            .progress(json!({
-                "status": "running_python",
-                "job_root_path": job_root,
-                "script": run_py
-            }))
-            .await?;
-
-        let logs_dir = job_root.join("logs");
-        tokio::fs::create_dir_all(&logs_dir)
-            .await
-            .with_context(|| format!("create logs dir {}", logs_dir.display()))?;
-        let log_path = logs_dir.join("pipeline.log");
-        let log_path_str = log_path.display().to_string();
-        let log_file = Arc::new(Mutex::new(
-            File::create(&log_path)
-                .await
-                .with_context(|| format!("create {}", log_path.display()))?,
-        ));
+            ctx.ctrl
+                .progress(json!({
+                    "status": "running_python",
+                    "job_root_path": job_root,
+                    "script": run_py
+                }))
+                .await?;
 
         let mut child = Command::new("python3")
             .arg(&run_py)
@@ -492,7 +478,7 @@ impl compute_runner_api::Runner for HelloRunner {
 
         let mut stdout_reader = BufReader::new(stdout).lines();
         let mut stderr_reader = BufReader::new(stderr).lines();
-        let mut tail: VecDeque<String> = VecDeque::with_capacity(200);
+            let mut tail: VecDeque<String> = VecDeque::with_capacity(200);
 
         // Read both streams concurrently to avoid deadlocks and keep logs structured.
         let mut stdout_done = false;
@@ -502,11 +488,6 @@ impl compute_runner_api::Runner for HelloRunner {
                 line = stdout_reader.next_line(), if !stdout_done => {
                     match line {
                         Ok(Some(l)) => {
-                            {
-                                let mut f = log_file.lock().await;
-                                let _ = f.write_all(l.as_bytes()).await;
-                                let _ = f.write_all(b"\n").await;
-                            }
                             if tail.len() == 200 { tail.pop_front(); }
                             tail.push_back(format!("stdout: {l}"));
                             info!(line = %l, "python stdout");
@@ -526,11 +507,6 @@ impl compute_runner_api::Runner for HelloRunner {
                 line = stderr_reader.next_line(), if !stderr_done => {
                     match line {
                         Ok(Some(l)) => {
-                            {
-                                let mut f = log_file.lock().await;
-                                let _ = f.write_all(l.as_bytes()).await;
-                                let _ = f.write_all(b"\n").await;
-                            }
                             if tail.len() == 200 { tail.pop_front(); }
                             tail.push_back(format!("stderr: {l}"));
                             warn!(line = %l, "python stderr");
@@ -562,25 +538,22 @@ impl compute_runner_api::Runner for HelloRunner {
                     "status": status.code(),
                     "duration_ms": duration.as_millis(),
                     "tail": summary_tail,
-                    "log_path": log_path_str.clone(),
                 }))
                 .await?;
             return Err(anyhow!(
-                "python job failed: status={:?}, log={}",
-                status.code(),
-                log_path_str
+                "python job failed: status={:?}",
+                status.code()
             ));
         }
 
-        ctx.ctrl
-            .log_event(json!({
-                "level": "info",
-                "message": "python job completed",
-                "status": status.code(),
-                "duration_ms": duration.as_millis(),
-                "log_path": log_path_str.clone(),
-            }))
-            .await?;
+            ctx.ctrl
+                .log_event(json!({
+                    "level": "info",
+                    "message": "python job completed",
+                    "status": status.code(),
+                    "duration_ms": duration.as_millis(),
+                }))
+                .await?;
 
         // Upload splat_rot.splat if it exists.
         let splat_rel = PathBuf::from("refined")
@@ -601,14 +574,23 @@ impl compute_runner_api::Runner for HelloRunner {
             .await
             .with_context(|| format!("upload {}", splat_abs.display()))?;
 
-        ctx.ctrl
-            .progress(json!({
-                "status": "finished",
-                "uploaded": "refined/splatter/splat_rot.splat",
-                "splat_path": splat_abs,
-            }))
-            .await?;
+            ctx.ctrl
+                .progress(json!({
+                    "status": "finished",
+                    "uploaded": "refined/splatter/splat_rot.splat",
+                    "splat_path": splat_abs,
+                }))
+                .await?;
 
-        Ok(())
+            Ok(())
+        }
+        .await;
+
+        // Best-effort cleanup of this task workspace to avoid disk growth.
+        if let Err(err) = tokio::fs::remove_dir_all(&job_root).await {
+            warn!(job_root = %job_root.display(), %err, "failed to remove task workspace");
+        }
+
+        task_result
     }
 }
