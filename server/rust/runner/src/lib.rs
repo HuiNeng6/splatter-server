@@ -25,6 +25,13 @@ pub fn registry() -> RunnerRegistry {
 
 pub struct HelloRunner;
 
+fn tasks_cleanup_disabled() -> bool {
+    match env::var("DISABLE_TASKS_CLEANUP") {
+        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
+    }
+}
+
 /// Extract (domain_server_base, domain_id) from a full data CID URL.
 fn parse_domain_from_cid(cid: &str) -> Option<(String, String)> {
     // Expect form: https://domain-server/api/v1/domains/{domain_id}/data/{data_id}
@@ -586,9 +593,16 @@ impl compute_runner_api::Runner for HelloRunner {
         }
         .await;
 
-        // Best-effort cleanup of this task workspace to avoid disk growth.
-        if let Err(err) = tokio::fs::remove_dir_all(&job_root).await {
-            warn!(job_root = %job_root.display(), %err, "failed to remove task workspace");
+        if !tasks_cleanup_disabled() {
+            // Best-effort cleanup of this task workspace to avoid disk growth.
+            if let Err(err) = tokio::fs::remove_dir_all(&job_root).await {
+                warn!(job_root = %job_root.display(), %err, "failed to remove task workspace");
+            }
+        } else {
+            info!(
+                job_root = %job_root.display(),
+                "task cleanup disabled; leaving workspace on disk"
+            );
         }
 
         task_result

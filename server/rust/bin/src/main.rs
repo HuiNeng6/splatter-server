@@ -6,6 +6,13 @@ use std::path::PathBuf;
 use tracing::info;
 use tracing::warn;
 
+fn tasks_cleanup_disabled() -> bool {
+    match env::var("DISABLE_TASKS_CLEANUP") {
+        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load .env from CWD and crate dir for convenience.
@@ -19,18 +26,25 @@ async fn main() -> Result<()> {
     let task_root_path = PathBuf::from(&task_root);
     if let Err(err) = tokio::fs::create_dir_all(&task_root_path).await {
         warn!(%err, path = %task_root_path.display(), "failed to ensure TASKS_ROOT exists");
-    } else if let Ok(mut rd) = tokio::fs::read_dir(&task_root_path).await {
-        while let Ok(Some(entry)) = rd.next_entry().await {
-            let path = entry.path();
-            if let Ok(ft) = entry.file_type().await {
-                if !ft.is_dir() {
-                    continue;
+    } else if !tasks_cleanup_disabled() {
+        if let Ok(mut rd) = tokio::fs::read_dir(&task_root_path).await {
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                let path = entry.path();
+                if let Ok(ft) = entry.file_type().await {
+                    if !ft.is_dir() {
+                        continue;
+                    }
+                }
+                if let Err(err) = tokio::fs::remove_dir_all(&path).await {
+                    warn!(%err, path = %path.display(), "failed to remove stale task workspace");
                 }
             }
-            if let Err(err) = tokio::fs::remove_dir_all(&path).await {
-                warn!(%err, path = %path.display(), "failed to remove stale task workspace");
-            }
         }
+    } else {
+        info!(
+            path = %task_root_path.display(),
+            "startup task cleanup disabled; leaving existing workspaces"
+        );
     }
 
     let app = posemesh_compute_node::http::router();
