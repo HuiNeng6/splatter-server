@@ -1,0 +1,8 @@
+name: splatter-server
+apiVersion: v2
+version: 0.0.1
+dependencies:
+- name: splatter-server
+  version: 0.1.0
+  repository: https://charts.aukiverse.com
+

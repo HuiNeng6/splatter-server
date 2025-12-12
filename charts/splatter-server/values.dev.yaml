@@ -1,0 +1,4 @@
+splatter-server:
+  extraEnvMap:
+    RUST_LOG: "debug"
+

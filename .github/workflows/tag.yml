@@ -61,24 +61,4 @@ jobs:
           cache-to: type=gha,mode=max
           tags: ${{ steps.meta.outputs.tags }}
 
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Authenticate ArgoCD
-        uses: clowdhaus/argo-cd-action@v2.3.0
-        with:
-          command: login
-          options: --username admin --password "${{ secrets.GLOBAL_DEV_ARGOCD_PASSWORD }}" --grpc-web argocd.dev.aukiverse.com:443
-
-      - name: Sync ArgoCD app
-        uses: clowdhaus/argo-cd-action@v2.3.0
-        with:
-          command: app sync "splatter-server"
-          options: --grpc-web --async
-
-      - name: Restart ArgoCD app
-        uses: clowdhaus/argo-cd-action@v2.3.0
-        with:
-          command: app actions run "splatter-server" restart
-          options: --kind "Deployment" --grpc-web
+  # Deployment is handled by ArgoCD reconciliation; no auto-sync on tag pushes.

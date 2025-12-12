@@ -1,0 +1,27 @@
+splatter-server:
+  image:
+    pullPolicy: Always
+    tag: latest
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/group.name: default
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+  resources:
+    limits:
+      cpu: 8
+      memory: 32Gi
+      ephemeral-storage: 128Gi
+    requests:
+      cpu: 6
+      memory: 16Gi
+      ephemeral-storage: 64Gi
+  tolerations:
+    - key: "dedicated"
+      value: "gpuGroup"
+      effect: "NoSchedule"
+  extraEnvMap:
+    RUST_LOG: "info"
