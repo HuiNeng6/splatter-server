@@ -10,42 +10,7 @@ from pathlib import Path
 
 logger = logging.getLogger("splatter-node")
 
-class JsonFormatter(logging.Formatter):
-    """Formatter to dump error message into JSON"""
-
-    def __init__(self, domain_id, job_id, dataset_id = None, fmt = None, datefmt = None, style = "%", validate = True):
-        super().__init__(fmt, datefmt, style, validate)
-        self.domain_id = domain_id
-        self.job_id = job_id
-        self.dataset_id = dataset_id
-
-    def format(self, record: logging.LogRecord) -> str:
-        t = time.strftime(self.datefmt, time.gmtime(record.created))
-        s = '%s.%09dZ' % (t, record.msecs*1e6)
-        if self.dataset_id:
-            record_dict = {
-                "time": s,
-                "level": record.levelname.lower(),
-                "name": record.name,
-                "tags": {
-                    "domain_id": self.domain_id, 
-                    "job_id": self.job_id, 
-                    "dataset_id": self.dataset_id},
-                "message": record.getMessage()
-            }
-        else: 
-            record_dict = {
-                "time": s,
-                "level": record.levelname.lower(),
-                "name": record.name,
-                "tags": {
-                    "domain_id": self.domain_id, 
-                    "job_id": self.job_id},
-                "message": record.getMessage()
-            }
-        return json.dumps(record_dict)
-
-def setup_logger(name=None, domain_id="", job_id="", dataset_id=None, level="INFO"):
+def setup_logger(name=None, level="INFO"):
     """To setup as many loggers as you want"""
 
     logger = logging.getLogger(name)
@@ -55,10 +20,19 @@ def setup_logger(name=None, domain_id="", job_id="", dataset_id=None, level="INF
     if logger.hasHandlers():
         logger.handlers.clear()
 
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(JsonFormatter(datefmt='%Y-%m-%dT%H:%M:%S',
-        domain_id=domain_id, job_id=job_id, dataset_id=dataset_id))
+    formatter = logging.Formatter(
+        '%(levelname)s - %(message)s'
+    )
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.addFilter(lambda record: record.levelno <= logging.WARN)  # ≤ WARN
+    console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
+
+    console_err_handler = logging.StreamHandler(sys.stderr)
+    console_err_handler.setLevel(logging.ERROR)
+    console_err_handler.setFormatter(formatter)
+    logger.addHandler(console_err_handler)
 
     return logger
 
@@ -166,7 +140,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_level", type=str, default="INFO", help="Path for output")
     args = parser.parse_args()
 
-    setup_logger("splatter-node", args.domain_id, args.job_id, None, args.log_level)
+    setup_logger("splatter-node", args.log_level)
 
     logger.info("Preparing Dataset")   
 

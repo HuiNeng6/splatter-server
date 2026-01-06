@@ -1,0 +1,8 @@
+apiVersion: v2
+appVersion: 0.1.0
+description: The Splatter Server runs splatfacto training pipelines for Posemesh domains.
+maintainers:
+- name: tatiesmars
+name: splatter-server
+type: application
+version: 0.1.0
