@@ -1,9 +1,16 @@
 # splatter-server
 
-## Build Docker
+## Docker
+
+### Build
+From repo root path:
 ```bash
-# on reoi root path
-docker build -t splatter-server -f docker/Dockerfile .
+docker build -t splatter-server .
+```
+
+### Run
+```bash
+docker run --gpus all -p 8080:8080 --name splatter -d --env-file .env splatter-server
 ```
 
 ## Run Trainer
