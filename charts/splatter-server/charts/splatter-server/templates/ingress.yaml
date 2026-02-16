@@ -1,4 +1,4 @@
-{{- if .Values.ingress.enabled -}}
+{{- if and .Values.ingress.enabled .Values.ingress.hosts -}}
 {{- $fullName := include "splatter-server.fullname" . -}}
 {{- if and .Values.ingress.className (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) }}
   {{- if not (hasKey .Values.ingress.annotations "kubernetes.io/ingress.class") }}
@@ -35,28 +35,9 @@ spec:
   {{- end }}
   {{- end }}
   rules:
-    {{- if .Values.ingress.hosts }}
     {{- range .Values.ingress.hosts }}
     - host: {{ . | quote }}
       http:
-        paths:
-          - path: {{ $ingressPath }}
-            {{- if and $ingressPathType (semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion) }}
-            pathType: {{ $ingressPathType }}
-            {{- end }}
-            backend:
-              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
-              service:
-                name: {{ $fullName }}
-                port:
-                  name: {{ $servicePort }}
-              {{- else }}
-              serviceName: {{ $fullName }}
-              servicePort: {{ $servicePort }}
-              {{- end }}
-    {{- end }}
-    {{- else }}
-    - http:
         paths:
           - path: {{ $ingressPath }}
             {{- if and $ingressPathType (semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion) }}
