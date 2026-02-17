@@ -1,4 +1,3 @@
-from image_undistortion import main as image_undistortion_main, CenterCropArgs
 from pathlib import Path
 import pycolmap
 import preprocessing
@@ -13,10 +12,10 @@ from subprocess import run
 import open3d as o3d
 from preprocessing import run_bundle_adjustment, set_colmap_points_from_pointcloud, cleanup_rec_cameras
 
-LICHTFELD_BIN = os.environ.get("LICHTFELD_BIN", "D:/LichtFeld-Studio-windows-nightly-2026-01-16-e79f1c6/bin/LichtFeld-Studio.exe")
-LICHTFELD_CONFIG = os.environ.get("LICHTFELD_CONFIG", "D:/splatter-node/worker/lichtfeld_optimization_params.json")
-LICHTFELD_CONFIG_VDA = os.environ.get("LICHTFELD_CONFIG_VDA", "D:/splatter-node/worker/lichtfeld_optimization_params_vda.json")
-VDA_REPO = os.environ.get("VDA_REPO", "D:/Video-Depth-Anything")
+LICHTFELD_BIN = os.environ.get("LICHTFELD_BIN", "/app/LichtFeld-Studio/build/LichtFeld-Studio")
+LICHTFELD_CONFIG = os.environ.get("LICHTFELD_CONFIG", "config/lichtfeld_optimization_params.json")
+LICHTFELD_CONFIG_VDA = os.environ.get("LICHTFELD_CONFIG_VDA", "config/lichtfeld_optimization_params_vda.json")
+VDA_REPO = os.environ.get("VDA_REPO", "/app/Video-Depth-Anything")
 
 def run_vda_depth(colmap_dir: Path, image_root: Path, output_dir: Path, voxel_size: float = 0.1) -> Path:
     """Run colmap_vda_depth.py to generate initial splat from depth estimation."""
@@ -78,7 +77,7 @@ def train_splat(colmap_dir: Path, output_dir: Path, images_dir: Path = None,
 
 def scan_main(job_root: Path, scan_id: str, iterations: int = 20000,
               enable_sparsity: bool = False, sparsify_steps: int = 15000,
-              reuse_trained: bool = False, use_vda: bool = False, use_custom_undistortion: bool = False,
+              reuse_trained: bool = False, use_vda: bool = False,
               convert_splat: bool = False, convert_sog: bool = False,
               bundle_adjust: bool = True) -> None:
     start_time = time.time()
@@ -127,18 +126,11 @@ def scan_main(job_root: Path, scan_id: str, iterations: int = 20000,
             dense_dir = job_root / "refined" / "local" / scan_id / "dense"
             shutil.rmtree(dense_dir, ignore_errors=True)
             dense_dir.mkdir(parents=True, exist_ok=True)
-            if use_custom_undistortion:
-                image_undistortion_main(CenterCropArgs(
-                    model=processed_dir,
-                    images=frames_dir,
-                    out=dense_dir
-                ))
-            else:
-                pycolmap.undistort_images(
-                    output_path=str(dense_dir),
-                    input_path=str(processed_dir),
-                    image_path=str(frames_dir)
-                )
+            pycolmap.undistort_images(
+                output_path=str(dense_dir),
+                input_path=str(processed_dir),
+                image_path=str(frames_dir)
+            )
         
         if bundle_adjust:
             images_dir = job_root / "refined" / "local" / scan_id / "dense" / "images"

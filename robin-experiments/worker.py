@@ -14,13 +14,13 @@ Output file naming (for domain data upload):
 """
 
 import os
-import re
 import shutil
 from pathlib import Path
 
 from jobs import upload_job_result
 import local_main
 import global_main
+from artifact_naming import rename_for_domain_upload
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
 INPUT_DIR = DATA_DIR / "input"
@@ -156,28 +156,3 @@ def process_global_splat(job_root: Path, output_dir: Path, params: dict):
     print(f"[global_splat] Result: {result}")
 
 
-def rename_for_domain_upload(filename: str) -> str | None:
-    """
-    Rename partition files for domain upload.
-
-    Returns new filename or None to skip.
-    """
-    # Skip combined splat PLY (too large, partitions are preferred)
-    if filename == "combined_splat.ply":
-        return None
-    
-    # Match partition .splat files
-    # Pattern: combined_splat_partition_{size}_{x}_{z}.splat
-    splat_match = re.match(r"combined_splat_partition_(.+)\.splat$", filename)
-    if splat_match:
-        suffix = splat_match.group(1)
-        return f"splat_partition_{suffix}.splat_partition"
-    
-    # Match partition .sog files
-    sog_match = re.match(r"combined_splat_partition_(.+)\.sog$", filename)
-    if sog_match:
-        suffix = sog_match.group(1)
-        return f"splat_partition_sog_{suffix}.splat_partition_sog"
-
-    # Unknown file - skip
-    return None

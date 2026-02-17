@@ -41,8 +41,9 @@ import cv2
 
 import local_main
 import global_main
+import combine_splats
 from domain_client import DomainClient
-from worker import rename_for_domain_upload
+from artifact_naming import rename_for_domain_upload
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
 
