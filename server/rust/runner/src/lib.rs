@@ -5,7 +5,7 @@ use posemesh_compute_node::telemetry;
 use posemesh_compute_node_runner_api as compute_runner_api;
 use posemesh_domain_http::domain_data::{download_by_id, download_metadata_v1, DownloadQuery};
 use serde_json::{json, Value};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -170,13 +170,12 @@ impl compute_runner_api::Runner for SplatterRunner {
                 refined_suffix = extract_refined_suffix(materialized.name.as_deref());
             }
 
+            // Always prefer CID-derived domain routing for data metadata/download calls.
+            // Lease-provided domain URL/ID can differ in some environments and cause
+            // "route not found" on domain-data endpoints.
             if let Some((base, dom_id)) = parse_domain_from_cid(&cid) {
-                if domain_base_from_input.is_none() {
-                    domain_base_from_input = Some(base);
-                }
-                if domain_id_from_input.is_none() {
-                    domain_id_from_input = Some(dom_id);
-                }
+                domain_base_from_input = Some(base);
+                domain_id_from_input = Some(dom_id);
             }
 
             // Read primary artifact bytes.
@@ -361,6 +360,102 @@ impl compute_runner_api::Runner for SplatterRunner {
                         }
                     }
 
+                    // Fallback for inputs that provide refined_scan_* names instead of
+                    // domain data IDs: derive the matching dmt_recording_* by name.
+                    let mut seen_scan_ids: HashSet<String> = HashSet::new();
+                    for raw in &data_id_list {
+                        let scan_id = if let Some(rest) = raw.strip_prefix("refined_scan_") {
+                            rest.to_string()
+                        } else if let Some(rest) = raw.strip_prefix("dmt_recording_") {
+                            rest.trim_end_matches(".mp4").to_string()
+                        } else {
+                            continue;
+                        };
+                        if scan_id.is_empty() || !seen_scan_ids.insert(scan_id.clone()) {
+                            continue;
+                        }
+                        let candidate_names = [
+                            format!("dmt_recording_{scan_id}"),
+                            format!("dmt_recording_{scan_id}.mp4"),
+                        ];
+                        for candidate_name in candidate_names {
+                            if downloaded_recordings.contains(&candidate_name) {
+                                break;
+                            }
+                            let query = DownloadQuery {
+                                ids: vec![],
+                                name: Some(candidate_name.clone()),
+                                data_type: Some("dmt_recording_mp4".to_string()),
+                            };
+                            match download_metadata_v1(
+                                &domain_base,
+                                &client_id,
+                                &token,
+                                domain_id,
+                                &query,
+                            )
+                            .await
+                            {
+                                Ok(meta_list) => {
+                                    if let Some(meta) = meta_list.into_iter().next() {
+                                        let data_id = meta.id.clone();
+                                        let domain_id_for_download = meta.domain_id.clone();
+                                        let folder_name = scan_id.clone();
+                                        match download_by_id(
+                                            &domain_base,
+                                            &client_id,
+                                            &token,
+                                            &domain_id_for_download,
+                                            &data_id,
+                                        )
+                                        .await
+                                        {
+                                            Ok(bytes) => {
+                                                let dest_dir = datasets_dir.join(&folder_name);
+                                                tokio::fs::create_dir_all(&dest_dir).await?;
+                                                let dest_path = dest_dir.join("Frames.mp4");
+                                                tokio::fs::write(&dest_path, &bytes).await?;
+                                                summary.datasets_downloaded += 1;
+                                                downloaded_recordings.insert(candidate_name.clone());
+                                                if !summary.scan_ids.contains(&folder_name) {
+                                                    summary.scan_ids.push(folder_name.clone());
+                                                }
+                                                ctx.ctrl
+                                                    .log_event(json!({
+                                                        "level": "info",
+                                                        "message": "downloaded derived dmt recording",
+                                                        "data_id": data_id,
+                                                        "folder": folder_name,
+                                                        "bytes": bytes.len(),
+                                                        "dest": dest_path.display().to_string(),
+                                                        "name_query": candidate_name,
+                                                    }))
+                                                    .await?;
+                                                break;
+                                            }
+                                            Err(err) => {
+                                                warn!(
+                                                    data_id = %data_id,
+                                                    scan_id = %scan_id,
+                                                    error = %err,
+                                                    "failed to download derived dmt recording"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        scan_id = %scan_id,
+                                        name_query = %candidate_name,
+                                        error = %err,
+                                        "failed metadata lookup for derived dmt recording"
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     let partial = materialize_inputs_for_mode(
                         mode,
                         &all_metadata,
@@ -511,6 +606,7 @@ impl compute_runner_api::Runner for SplatterRunner {
                 }))
                 .await?;
 
+        
         let mut child = Command::new("python3")
             .args(cmd_args.drain(..))
             .env("PYTHONUNBUFFERED", "1")
@@ -860,36 +956,110 @@ async fn materialize_colmap_binaries(
         ("colmap_rigs_bin", "rigs.bin"),
     ];
 
-    let dest_dir = job_root
-        .join("refined")
-        .join("global")
-        .join("refined_sfm_combined");
-    tokio::fs::create_dir_all(&dest_dir).await?;
-
-    for (prefix, target_name) in expected_colmap {
+    let mut colmap_refs: HashMap<String, (String, String)> = HashMap::new();
+    let mut missing: Vec<&str> = Vec::new();
+    for (prefix, _) in expected_colmap {
         let expected_name = format!("{prefix}{suffix}");
         let query = DownloadQuery {
             ids: vec![],
             name: Some(expected_name.clone()),
             data_type: None,
         };
-        let list = download_metadata_v1(domain_base, client_id, token, domain_id, &query).await?;
-        if let Some(meta) = list.into_iter().next() {
-            let dest = dest_dir.join(target_name);
-            let bytes = download_to(domain_base, client_id, token, &meta.domain_id, &meta.id, &dest).await?;
-            ctx.ctrl
-                .log_event(json!({
-                    "level": "info",
-                    "message": "downloaded colmap binary",
-                    "name": expected_name,
-                    "data_id": meta.id,
-                    "bytes": bytes,
-                    "dest": dest.display().to_string(),
-                }))
-                .await?;
-        } else {
-            warn!(name = %expected_name, "colmap metadata missing");
+        match download_metadata_v1(domain_base, client_id, token, domain_id, &query).await {
+            Ok(meta_list) => {
+                if let Some(meta) = meta_list.into_iter().next() {
+                    info!(
+                        name = %expected_name,
+                        data_id = %meta.id,
+                        "found colmap metadata"
+                    );
+                    colmap_refs.insert(prefix.to_string(), (meta.id, meta.domain_id.clone()));
+                } else {
+                    missing.push(prefix);
+                    warn!(name = %expected_name, "colmap metadata missing");
+                }
+            }
+            Err(err) => {
+                missing.push(prefix);
+                warn!(
+                    name = %expected_name,
+                    error = %err,
+                    "colmap metadata fetch failed"
+                );
+            }
         }
+    }
+
+    if missing.is_empty() {
+        let dest_dir = job_root
+            .join("refined")
+            .join("global")
+            .join("refined_sfm_combined");
+        tokio::fs::create_dir_all(&dest_dir).await?;
+
+        for (prefix, target_name) in expected_colmap {
+            if let Some((data_id, domain_id_for_download)) = colmap_refs.get(prefix) {
+                match download_by_id(domain_base, client_id, token, domain_id_for_download, data_id).await
+                {
+                    Ok(bytes) => {
+                        let dest_path = dest_dir.join(target_name);
+                        tokio::fs::write(&dest_path, &bytes).await?;
+
+                        ctx.ctrl
+                            .log_event(json!({
+                                "level": "info",
+                                "message": "downloaded colmap binary",
+                                "data_id": data_id,
+                                "bytes": bytes.len(),
+                                "dest": dest_path.display().to_string(),
+                            }))
+                            .await?;
+
+                        info!(
+                            name = %prefix,
+                            bytes = bytes.len(),
+                            dest = %dest_path.display(),
+                            "downloaded colmap binary"
+                        );
+                    }
+                    Err(err) => {
+                        ctx.ctrl
+                            .log_event(json!({
+                                "level": "error",
+                                "message": "failed to download colmap binary",
+                                "data_id": data_id,
+                                "error": err.to_string(),
+                            }))
+                            .await?;
+                        warn!(
+                            name = %prefix,
+                            data_id = %data_id,
+                            error = %err,
+                            "failed to download colmap binary"
+                        );
+                    }
+                }
+            }
+        }
+    } else {
+        ctx.ctrl
+            .log_event(json!({
+                "level": "warn",
+                "message": "missing colmap binaries",
+                "suffix": suffix,
+                "missing": missing,
+            }))
+            .await?;
+        warn!(
+            suffix = %suffix,
+            missing = ?missing,
+            "missing colmap binaries"
+        );
+        return Err(anyhow!(
+            "missing required colmap binaries for suffix {}: {:?}",
+            suffix,
+            missing
+        ));
     }
     Ok(())
 }

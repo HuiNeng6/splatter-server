@@ -49,3 +49,5 @@ log.txt
 *.log
 __pycache__/
 tasks/
+venv/
+.venv/
