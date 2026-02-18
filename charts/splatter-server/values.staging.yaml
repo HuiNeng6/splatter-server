@@ -1,0 +1,5 @@
+splatter-server:
+  image:
+    tag: v0.0.0
+    pullPolicy: IfNotPresent
+
