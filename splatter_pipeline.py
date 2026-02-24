@@ -130,7 +130,7 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
     dense_dir.mkdir(parents=True, exist_ok=True)
     splat_dir.mkdir(parents=True, exist_ok=True)
 
-    preprocessing.preprocess(colmap_dir, processed_dir, frames_dir=merged_frames, bundle_adjust=False)
+    preprocessing.preprocess(colmap_dir, processed_dir, frames_dir=merged_frames, bundle_adjust=True)
     import pycolmap
     pycolmap.undistort_images(
         output_path=str(dense_dir),
