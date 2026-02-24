@@ -39,7 +39,11 @@ def cleanup_rec_points(
     pointcloud = colmap_to_o3d_pointcloud(rec)
     old_count = len(pointcloud.points)
     pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-    print(f"[preprocessing] Removed {old_count - len(pointcloud.points)} outlier points (remaining {len(pointcloud.points)})")
+    print(f"[preprocessing] Removed {old_count - len(pointcloud.points)} statistical outlier points (remaining {len(pointcloud.points)})")
+
+    old_count = len(pointcloud.points)
+    pointcloud, _ = pointcloud.remove_radius_outlier(nb_points=10, radius=0.2)
+    print(f"[preprocessing] Removed {old_count - len(pointcloud.points)} radius outlier points (remaining {len(pointcloud.points)})")
     
     # Only keep points seen close-up by several cameras (similar as we do in post-processing too)
     """
@@ -83,7 +87,9 @@ def cleanup_rec_cameras(
         elif frames_dir is not None:
             if black_mask_threshold > 0:
                 image = cv2.imread(frames_dir / img.name)
-                mask = image == [0, 0, 0]
+                # Downsampled for speed
+                small_image = cv2.resize(image, (image.shape[1] // 2, image.shape[0] // 2), interpolation=cv2.INTER_NEAREST)
+                mask = small_image == [0, 0, 0]
                 if np.mean(mask) > black_mask_threshold:
                     print(f"[preprocessing] Removing image {img.name} with {np.mean(mask)}% black pixels")
                     frames_to_remove.append(frame_id)
@@ -189,9 +195,10 @@ def remove_masked_images(rec: pycolmap.Reconstruction) -> pycolmap.Reconstructio
     return rec
 
 
-def run_bundle_adjustment(rec: pycolmap.Reconstruction) -> pycolmap.Reconstruction:
+def run_bundle_adjustment(rec: pycolmap.Reconstruction, refine_camera_poses: bool = False) -> pycolmap.Reconstruction:
     """Run bundle adjustment with fixed poses, only refining intrinsics (focal length and radial distortion)."""
     # Convert cameras from SIMPLE_PINHOLE/PINHOLE to SIMPLE_RADIAL/RADIAL to allow distortion refinement
+    converted_counts = {}
     for cam_id in rec.cameras:
         cam = rec.cameras[cam_id]
         old_model = cam.model
@@ -217,14 +224,20 @@ def run_bundle_adjustment(rec: pycolmap.Reconstruction) -> pycolmap.Reconstructi
             camera_id=cam_id
         )
         rec.cameras[cam_id] = new_cam
-        print(f"Converted camera {cam_id} from {old_model} to {new_model}")
+
+        if (old_model, new_model) not in converted_counts:
+            converted_counts[(old_model, new_model)] = 0
+        converted_counts[(old_model, new_model)] += 1
+    
+    for (old_model, new_model), count in converted_counts.items():
+        print(f"Converted {count} cameras from {old_model} to {new_model}")
 
     ba_options = pycolmap.BundleAdjustmentOptions()
     ba_options.refine_focal_length = True
     ba_options.refine_principal_point = False  # Keep cx, cy fixed
     ba_options.refine_extra_params = True  # Refine radial distortion k
-    ba_options.refine_rig_from_world = False  # Fix poses
-    #ba_options.solver_options.max_num_iterations = 10  # Few iterations, stay close to original
+    ba_options.refine_rig_from_world = refine_camera_poses
+    ba_options.solver_options.max_num_iterations = 20  # Few iterations, stay close to original
     
     pycolmap.bundle_adjustment(rec, ba_options)
     print(f"Bundle adjustment complete: {rec.summary()}")
@@ -243,7 +256,7 @@ def preprocess(
     print(rec.summary())
 
     if bundle_adjust:
-        rec = run_bundle_adjustment(rec)
+        rec = run_bundle_adjustment(rec, refine_camera_poses=True)
 
     rec = cleanup_rec_cameras(rec, camera_min_3d_points, view_count_max_depth, frames_dir=frames_dir)
     rec = cleanup_rec_points(rec, point_min_view_count, view_count_max_depth)

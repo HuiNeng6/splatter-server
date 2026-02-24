@@ -15,13 +15,15 @@ import zipfile
 from pathlib import Path
 
 import cv2
+import numpy as np
+from plyfile import PlyData, PlyElement
 
-import combine_splats
 import convert_splat
 import filter_splats
 import global_main
 import local_main
 import preprocessing
+from combine_splats import PRE_ROTATION_MATRIX, transform_splat_data
 from artifact_naming import rename_for_domain_upload
 
 
@@ -87,26 +89,28 @@ def stage_output(output_dir: Path, source: Path, dest_name: str) -> None:
     shutil.copy2(source, output_dir / dest_name)
 
 
-def run_colmap_single_local(job_root: Path, iterations: int, enable_sparsity: bool) -> dict:
+def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bool) -> dict:
     scan_ids = discover_scan_ids(job_root)
     if not scan_ids:
         raise ValueError("no scans found in datasets")
 
-    # Keep behavior deterministic: use one local-like training target for this capability.
-    scan_id = scan_ids[0]
-    if len(scan_ids) > 1:
-        print(f"[colmap_v1_single_local] multiple scans found ({len(scan_ids)}), using first: {scan_id}")
-
-    for sid in scan_ids:
-        ensure_frames_for_scan(job_root, sid)
-
     merged_frames = job_root / "Frames"
     merged_frames.mkdir(parents=True, exist_ok=True)
     for sid in scan_ids:
-        src = job_root / "datasets" / sid / "Frames"
+        scan_dir = job_root / "datasets" / sid
+        mp4_path = scan_dir / "Frames.mp4"
+        if mp4_path.exists():
+            # using exactly the same image naming as in the global reconstruction.
+            extracted = mp4_to_frames(mp4_path, merged_frames, f"{sid}_")
+            if extracted == 0:
+                raise RuntimeError(f"no frames extracted from {mp4_path}")
+            continue
+
+        # Fallback for pre-extracted scan-local frames.
+        src = ensure_frames_for_scan(job_root, sid)
         for img in src.iterdir():
             if img.is_file() and img.suffix.lower() in {".jpg", ".jpeg", ".png"}:
-                dst = merged_frames / img.name
+                dst = merged_frames / f"{sid}_{img.name}"
                 if not dst.exists():
                     shutil.copy2(img, dst)
 
@@ -117,11 +121,16 @@ def run_colmap_single_local(job_root: Path, iterations: int, enable_sparsity: bo
     processed_dir = job_root / "refined" / "splatter" / "processed"
     dense_dir = job_root / "refined" / "splatter" / "dense"
     splat_dir = job_root / "refined" / "splatter"
+
+    shutil.rmtree(processed_dir, ignore_errors=True)
+    shutil.rmtree(dense_dir, ignore_errors=True)
+    shutil.rmtree(splat_dir, ignore_errors=True)
+
     processed_dir.mkdir(parents=True, exist_ok=True)
     dense_dir.mkdir(parents=True, exist_ok=True)
     splat_dir.mkdir(parents=True, exist_ok=True)
 
-    preprocessing.preprocess(colmap_dir, processed_dir, frames_dir=merged_frames, bundle_adjust=True)
+    preprocessing.preprocess(colmap_dir, processed_dir, frames_dir=merged_frames, bundle_adjust=False)
     import pycolmap
     pycolmap.undistort_images(
         output_path=str(dense_dir),
@@ -139,7 +148,7 @@ def run_colmap_single_local(job_root: Path, iterations: int, enable_sparsity: bo
         iterations=iterations,
         enable_sparsity=enable_sparsity,
         sparsify_steps=sparsify_steps,
-        init_ply=None,
+        init_ply=None
     )
 
     total_iters = iterations + sparsify_steps
@@ -163,13 +172,19 @@ def run_colmap_single_local(job_root: Path, iterations: int, enable_sparsity: bo
     if not filtered_ply.exists():
         raise FileNotFoundError(f"filtered output missing: {filtered_ply}")
 
-    splat_out = convert_splat.convert_ply_to_splat(filtered_ply)
-    required_path = splat_dir / "splat_rot.splat"
-    shutil.copy2(splat_out, required_path)
+    vert = PlyData.read(str(filtered_ply))["vertex"].data
+    vert = transform_splat_data(vert, scale=1.0, R=PRE_ROTATION_MATRIX, t=np.zeros(3))
+    
+    rotated_ply_path = splat_dir / f"splat_{total_iters}.filtered.rotated.ply"
+    output_el = PlyElement.describe(vert, "vertex")
+    PlyData([output_el], text=False).write(str(rotated_ply_path))
+
+    output_path = splat_dir / "splat_rot.splat"
+    convert_splat.convert_ply_to_splat(rotated_ply_path, output_path)
 
     return {
-        "scan_id": scan_id,
-        "required_output": str(required_path),
+        "scan_ids": scan_ids,
+        "outputs": [str(output_path)],
         "filtered_ply": str(filtered_ply),
     }
 
@@ -278,7 +293,7 @@ def parse_scan_ids(value: str | None) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Splatter pipeline entrypoint")
-    parser.add_argument("--mode", required=True, choices=["colmap_v1_single_local", "local_only", "global_only"])
+    parser.add_argument("--mode", required=True, choices=["colmap_v1_single_splat", "local_only", "global_only"])
     parser.add_argument("--job_root_path", type=Path, required=True)
     parser.add_argument("--scan_ids", type=str, default="")
     parser.add_argument("--iterations", type=int, default=20000)
@@ -298,11 +313,11 @@ def main() -> None:
     job_root.mkdir(parents=True, exist_ok=True)
     scan_ids = parse_scan_ids(args.scan_ids)
 
-    if args.mode == "colmap_v1_single_local":
-        result = run_colmap_single_local(job_root, args.iterations, args.enable_sparsity)
+    if args.mode == "colmap_v1_single_splat":
+        run_colmap_single_splat(job_root, args.iterations, args.enable_sparsity)
     elif args.mode == "local_only":
         convert_to_splat = args.convert_to_splat and not args.no_convert_to_splat
-        result = run_local_only(
+        run_local_only(
             job_root=job_root,
             scan_ids=scan_ids,
             iterations=args.iterations,
@@ -315,7 +330,7 @@ def main() -> None:
         use_filtered = args.use_filtered and not args.no_use_filtered
         do_partition = args.partition and not args.no_partition
         convert_to_splat = args.convert_to_splat and not args.no_convert_to_splat
-        result = run_global_only(
+        run_global_only(
             job_root=job_root,
             scan_ids=scan_ids,
             use_filtered=use_filtered,
@@ -324,8 +339,6 @@ def main() -> None:
             convert_to_splat=convert_to_splat,
             convert_to_sog=args.convert_to_sog,
         )
-
-    print(result)
 
 
 if __name__ == "__main__":

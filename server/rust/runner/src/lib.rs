@@ -23,8 +23,8 @@ pub const CAPABILITY_GLOBAL_V1: &str = "/splatter/global/v1";
 pub fn registry() -> RunnerRegistry {
     RunnerRegistry::new()
         .register(SplatterRunner::new(CAPABILITY_COLMAP_V1))
-        //.register(SplatterRunner::new(CAPABILITY_LOCAL_V1))
-        //.register(SplatterRunner::new(CAPABILITY_GLOBAL_V1))
+        .register(SplatterRunner::new(CAPABILITY_LOCAL_V1))
+        .register(SplatterRunner::new(CAPABILITY_GLOBAL_V1))
 }
 
 #[derive(Clone, Copy)]
@@ -537,8 +537,13 @@ impl compute_runner_api::Runner for SplatterRunner {
         let pipeline_py = PathBuf::from("splatter_pipeline.py");
         let project_root = pipeline_py
             .parent()
+            .filter(|p| !p.as_os_str().is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| exe_dir.clone());
+            .unwrap_or_else(|| {
+                env::var_os("SPLATTER_PROJECT_ROOT")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("/app"))
+            });
 
         let use_legacy_colmap = mode == CapabilityMode::ColmapV1
             && (bool_env("SPLATTER_USE_LEGACY_COLMAP_RUN_PY", false)
@@ -558,7 +563,7 @@ impl compute_runner_api::Runner for SplatterRunner {
             ]
         } else {
             let mode_name = match mode {
-                CapabilityMode::ColmapV1 => "colmap_v1_single_local",
+                CapabilityMode::ColmapV1 => "colmap_v1_single_splat",
                 CapabilityMode::LocalV1 => "local_only",
                 CapabilityMode::GlobalV1 => "global_only",
             };
@@ -606,15 +611,38 @@ impl compute_runner_api::Runner for SplatterRunner {
                 }))
                 .await?;
 
-        
-        let mut child = Command::new("python3")
+        let full_cmd: Vec<String> = std::iter::once("python".to_string())
+            .chain(cmd_args.iter().cloned())
+            .collect();
+        info!(
+            cmd = ?full_cmd,
+            cwd = %project_root.display(),
+            path_env = ?env::var("PATH").unwrap_or_else(|_| "<unset>".into()),
+            "spawning python pipeline"
+        );
+        ctx.ctrl
+            .log_event(json!({
+                "level": "info",
+                "message": "spawning python command",
+                "command": full_cmd,
+                "cwd": project_root.display().to_string(),
+            }))
+            .await?;
+
+        let cmd_for_error = full_cmd.join(" ");
+        let mut child = Command::new("python")
             .args(cmd_args.drain(..))
             .env("PYTHONUNBUFFERED", "1")
             .current_dir(&project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .with_context(|| "spawn python pipeline")?;
+            .with_context(|| format!(
+                "spawn python pipeline failed: {} (cwd={}, PATH={:?})",
+                cmd_for_error,
+                project_root.display(),
+                env::var("PATH").unwrap_or_else(|_| "<unset>".into())
+            ))?;
 
         let start = Instant::now();
         let stdout = child

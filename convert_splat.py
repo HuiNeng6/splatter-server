@@ -28,7 +28,10 @@ import ply2splat
 SPLAT_TRANSFORM_BINARY = "splat-transform.cmd" if sys.platform == "win32" else "splat-transform"
 
 
-def convert_ply_to_splat(input_path: Path, output_path: Path = None) -> Path:
+def convert_ply_to_splat(
+    input_path: Path,
+    output_path: Path = None
+) -> Path:
     """
     Convert a PLY file to .splat format using ply2splat.
     
@@ -41,7 +44,6 @@ def convert_ply_to_splat(input_path: Path, output_path: Path = None) -> Path:
     """
     input_path = Path(input_path)
     output_path = Path(output_path) if output_path else input_path.with_suffix(".splat")
-    
     print(f"Converting PLY to splat: {input_path.name} -> {output_path.name}")
     ply2splat.convert(str(input_path), str(output_path))
     
