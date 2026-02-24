@@ -3,10 +3,10 @@ splatter-server:
     pullPolicy: Always
     tag: latest
   ingress:
-    enabled: true
+    enabled: false
     annotations:
       kubernetes.io/ingress.class: alb
-      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/scheme: internal
       alb.ingress.kubernetes.io/group.name: default
       alb.ingress.kubernetes.io/target-type: ip
       alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'

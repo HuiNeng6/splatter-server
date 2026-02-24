@@ -1191,9 +1191,9 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "posemesh-compute-node"
-version = "0.2.7"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4c103901620fd09e050867a07e754963a2019949f46554dda986fa166e95463"
+checksum = "f49b4032920289bd0d2cd4e8134fdc74cb1942edbbada6deb3b7c46115980a85"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1240,9 +1240,9 @@ dependencies = [
 
 [[package]]
 name = "posemesh-domain-http"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48094709aa4229bab3c6ddde99dcee10cbedde7984f4320c02f7ac83a2ad3d10"
+checksum = "0cc1cdd4c3a9c614c084c69e76e0735b3c9e1179c502bfcee1f2f60fd245802b"
 dependencies = [
  "base64",
  "bytes",
@@ -1265,9 +1265,9 @@ dependencies = [
 
 [[package]]
 name = "posemesh-node-registration"
-version = "0.1.5"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "962af9537f51680883c89e4484267b6ff36c87f99817ec9c351b3d4691ecf930"
+checksum = "fd79bbd738d45c38a760c93c26f049b89bef9aba32037943a126a97862ba5259"
 dependencies = [
  "anyhow",
  "axum",
