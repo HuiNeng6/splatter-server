@@ -313,7 +313,6 @@ def load_transform(transform_data: dict, apply_pre_rotation: bool = True) -> tup
         
         # OpenGL quaternion format: xyzw -> convert to wxyz for our functions
         qx, qy, qz, qw = float(rot["x"]), float(rot["y"]), float(rot["z"]), float(rot["w"])
-        qx, qy, qz = qy, qx, -qz
         rotation_wxyz = np.array([qw, qx, qy, qz])
         R = quaternion_to_rotation_matrix(rotation_wxyz)
     else:
@@ -324,21 +323,9 @@ def load_transform(transform_data: dict, apply_pre_rotation: bool = True) -> tup
     
     # Compose with pre-rotation: first apply pre-rotation, then alignment
     # p' = scale * R_align @ (R_pre @ p) + t = scale * (R_align @ R_pre) @ p + t
-    #if apply_pre_rotation:
-    #    R = R @ PRE_ROTATION_MATRIX
-    
-    t = np.array([t[1], t[0], -t[2]])
-    #t[2] *= -1
-    
-    colmap_to_gl = np.array([
-        [0, 1, 0],
-        [1, 0, 0],
-        [0, 0, -1]
-    ])
+    if apply_pre_rotation:
+        R = R @ PRE_ROTATION_MATRIX
 
-    # change of basis for transform matrix
-    #R = colmap_to_gl @ R @ colmap_to_gl.T
-    #scale = 1.0
     return scale, R, t
 
 
@@ -355,10 +342,8 @@ def transform_splat_data(vert: np.ndarray, scale: float, R: np.ndarray, t: np.nd
     
     # Transform positions (vectorized numpy)
     x, y, z = vert["x"].astype(np.float64), vert["y"].astype(np.float64), vert["z"].astype(np.float64)
-    #x, y , z = y, x, -z
     xyz = np.column_stack([x,y,z])
     xyz_transformed = scale * (xyz @ R.T) + t
-    xyz_transformed = np.column_stack([xyz_transformed[:, 1], xyz_transformed[:, 0], -xyz_transformed[:, 2]])
     vert["x"] = xyz_transformed[:, 0].astype(vert["x"].dtype)
     vert["y"] = xyz_transformed[:, 1].astype(vert["y"].dtype)
     vert["z"] = xyz_transformed[:, 2].astype(vert["z"].dtype)
