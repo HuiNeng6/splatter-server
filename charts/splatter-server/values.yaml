@@ -22,5 +22,5 @@ splatter-server:
       ephemeral-storage: 64Gi
   tolerations:
     - key: "dedicated"
-      value: "gpuGroup"
+      value: "karpenterGPU"
       effect: "NoSchedule"
