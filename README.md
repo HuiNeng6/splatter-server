@@ -5,7 +5,6 @@ Splatter compute node for the Auki Network: runs Gaussian splatting jobs (COLMAP
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-Copyright (c) 2025 Auki Labs Limited.
 
 ## Contributing
 
