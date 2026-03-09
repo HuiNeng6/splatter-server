@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DMS_BASE_URL=${DMS_BASE_URL:-https://dms.dev.aukiverse.com/v1}
+DMS_BASE_URL=${DMS_BASE_URL:-https://dms.auki.network/v1}
 APP_JWT=${APP_JWT:-}
 DOMAIN_ID=${DOMAIN_ID:-}
 OUTPUTS_PREFIX=${OUTPUTS_PREFIX:-hello-demo/}
@@ -9,7 +9,7 @@ MESSAGE=${MESSAGE:-Hello from curl-create-hello-job.sh}
 TASK_LABEL=${TASK_LABEL:-hello}
 STAGE=${STAGE:-hello}
 BILLING_UNITS=${BILLING_UNITS:-1}
-INPUT_CID=${INPUT_CID:-} # https://domain.dev.aukiverse.com/api/v1/domains/<DOMAIN_ID>/data/<DATA_ID
+INPUT_CID=${INPUT_CID:-} # https://domain-server/api/v1/domains/<DOMAIN_ID>/data/<DATA_ID>
 CAPABILITY="/splatter/colmap/v1"
 
 if [[ -z "$APP_JWT" ]]; then
