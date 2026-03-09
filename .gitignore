@@ -1,3 +1,7 @@
+# Environment and secrets (use .env.example as template)
+.env
+*.env.local
+
 # Vim
 [._]*.s[a-v][a-z]
 !*.svg  # comment out if you don't need vector files
