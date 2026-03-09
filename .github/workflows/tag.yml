@@ -44,5 +44,5 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            aukilabs/splatter-server:stable
+            aukilabs/splatter-server:latest
             aukilabs/splatter-server:${{ github.ref_name }}
