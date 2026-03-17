@@ -71,6 +71,7 @@ def cleanup_rec_cameras(
     min_3d_points_seen: int = 20,
     view_count_max_depth: float = 3.0,
     black_mask_threshold: float = 0.01, # percentage of pixels completely black to skip (assume human occlusion)
+    blur_threshold: float = 20.0, # Laplacian variance below this = too blurry
     frames_dir: Path = None
 ) -> pycolmap.Reconstruction:
     """Remove cameras with few 3D points seen close-up"""
@@ -85,20 +86,31 @@ def cleanup_rec_cameras(
         if point_counts_per_cam.get(cam_id, 0) < min_3d_points_seen:
             frames_to_remove.append(frame_id)
         elif frames_dir is not None:
+            if black_mask_threshold < 0 and blur_threshold < 0:
+                continue
+            
+            image = cv2.imread(str(frames_dir / img.name))
+            small_image = cv2.resize(image, (image.shape[1] // 2, image.shape[0] // 2), interpolation=cv2.INTER_NEAREST)
+
             if black_mask_threshold > 0:
-                image = cv2.imread(frames_dir / img.name)
-                # Downsampled for speed
-                small_image = cv2.resize(image, (image.shape[1] // 2, image.shape[0] // 2), interpolation=cv2.INTER_NEAREST)
                 mask = small_image == [0, 0, 0]
                 if np.mean(mask) > black_mask_threshold:
                     print(f"[preprocessing] Removing image {img.name} with {np.mean(mask)}% black pixels")
+                    frames_to_remove.append(frame_id)
+                    continue
+
+            if blur_threshold > 0:
+                gray = cv2.cvtColor(small_image, cv2.COLOR_BGR2GRAY)
+                laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+                if laplacian_var < blur_threshold:
+                    print(f"[preprocessing] Removing blurry image {img.name} (laplacian variance: {laplacian_var:.1f} < {blur_threshold})")
                     frames_to_remove.append(frame_id)
     
     # Deregister images in reverse order to avoid invalidating iterators
     for frame_id in reversed(frames_to_remove):
         rec.deregister_frame(frame_id)
     
-    print(f"[preprocessing] Removed {len(frames_to_remove)} cameras with too few 3D points seen (remaining {len(rec.images)})")
+    print(f"[preprocessing] Removed {len(frames_to_remove)} cameras (remaining {len(rec.images)})")
     return rec
 
 def voxelgrid_to_pointcloud(vg: o3d.geometry.VoxelGrid) -> o3d.geometry.PointCloud:
@@ -195,7 +207,7 @@ def remove_masked_images(rec: pycolmap.Reconstruction) -> pycolmap.Reconstructio
     return rec
 
 
-def run_bundle_adjustment(rec: pycolmap.Reconstruction, refine_camera_poses: bool = False) -> pycolmap.Reconstruction:
+def run_bundle_adjustment(rec: pycolmap.Reconstruction, refine_camera_poses: bool = True) -> pycolmap.Reconstruction:
     """Run bundle adjustment with fixed poses, only refining intrinsics (focal length and radial distortion)."""
     # Convert cameras from SIMPLE_PINHOLE/PINHOLE to SIMPLE_RADIAL/RADIAL to allow distortion refinement
     converted_counts = {}

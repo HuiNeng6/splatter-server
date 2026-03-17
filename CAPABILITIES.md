@@ -46,8 +46,8 @@ This document defines the runtime contract for the splatter capabilities impleme
 
 ## Rollout flags
 
-- `SPLATTER_ENABLE_LIGHTFELD_COLMAP` (default: `true`)
+- `SPLATTER_ENABLE_LICHTFELD_COLMAP` (default: `true`)
   - Enables new LichtFeld colmap pipeline for `/splatter/colmap/v1`.
 - `SPLATTER_USE_LEGACY_COLMAP_RUN_PY` (default: `false`)
   - Forces legacy `run.py` behavior for `/splatter/colmap/v1`.
-  - If enabled, it overrides `SPLATTER_ENABLE_LIGHTFELD_COLMAP`.
+  - If enabled, it overrides `SPLATTER_ENABLE_LICHTFELD_COLMAP`.

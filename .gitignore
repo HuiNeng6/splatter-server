@@ -30,10 +30,15 @@ tags
 *.tar
 *.zip
 
-# Logs and databases
+# Logs
+log.txt
 *.log
-*.sql
-*.sqlite
+
+# All .env configs (only commit .env.example)
+.env
+.env.*
+.env-*
+!.env.example
 
 # OS generated files
 .DS_Store
@@ -43,10 +48,13 @@ tags
 .Trashes
 ehthumbs.db
 Thumbs.db
-.env
-log.txt
-*.log
+
+# Local python folders
 __pycache__/
-tasks/
 venv/
 .venv/
+
+# Server data for tasks
+tasks/
+
+# Other

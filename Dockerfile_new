@@ -1,5 +1,5 @@
 ##
-## Build the Rust compute-node binary (splatter-bin)
+## Stage 1: Build the Rust compute-node binary (splatter-bin)
 ##
 FROM --platform=$BUILDPLATFORM rust:1.89-bullseye AS rust-build
 WORKDIR /app
@@ -7,30 +7,23 @@ COPY server/rust/ server/rust/
 RUN cargo build --release -p splatter-bin --manifest-path server/rust/Cargo.toml
 
 ##
-## Runtime image (LichtFeld + splatter python pipeline + rust compute-node)
+## Stage 2: Build LichtFeld Studio
 ##
-FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS lichtfeld-build
 
-ARG TARGETPLATFORM TARGETARCH TARGETOS
-ARG USERNAME=splatter-server
-ARG USER_UID=1000
-ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Python + build/runtime dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
-        python3.12 \
-        python3.12-venv \
-        python3-pip \
         git \
         curl \
         zip \
         unzip \
-        gpg \
-        wget \
         tar \
+        wget \
+        gpg \
+        python3 \
         gcc-14 \
         g++-14 \
         gfortran-14 \
@@ -47,7 +40,6 @@ RUN apt-get update && \
         libxcursor-dev \
         xorg-dev \
         libglu1-mesa-dev \
-        libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # LichtFeld needs CMake 3.30+
@@ -57,18 +49,11 @@ RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/nul
     apt-get install -y --no-install-recommends cmake && \
     rm -rf /var/lib/apt/lists/*
 
-# SOG conversion binary
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g @playcanvas/splat-transform
-
-# For LichtFeld Studio we need GCC/G++ 14
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 60 && \
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 60
 
 WORKDIR /app
 
-# Build LichtFeld Studio
 RUN git clone https://github.com/microsoft/vcpkg.git
 RUN cd vcpkg && ./bootstrap-vcpkg.sh -disableMetrics
 RUN git clone --recursive https://github.com/MrNeRF/LichtFeld-Studio
@@ -80,6 +65,68 @@ RUN cd LichtFeld-Studio && \
 RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \
     ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/lib/x86_64-linux-gnu/libcuda.so.1
 RUN (cd LichtFeld-Studio && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} cmake --build build -- -j$(nproc))
+
+# Collect the binary, its direct shared-lib deps, and the vcpkg runtime libraries
+# (including dlopen'd plugins like nvimgcodec codec extensions) for the runtime stage.
+RUN mkdir -p /lichtfeld-dist/lib \
+    && cp /app/LichtFeld-Studio/build/LichtFeld-Studio /lichtfeld-dist/ \
+    && ldd /app/LichtFeld-Studio/build/LichtFeld-Studio \
+       | awk '/=>/{print $3}' \
+       | sort -u \
+       | while read lib; do \
+           [ -f "$lib" ] || continue; \
+           case "$lib" in /usr/lib/*|/lib/*) continue ;; esac; \
+           cp -L "$lib" /lichtfeld-dist/lib/; \
+         done \
+    && echo "--- Bundled direct deps ---" && ls -lh /lichtfeld-dist/lib/
+# vcpkg runtime libs + plugin subdirs (e.g. nvimgcodec extensions loaded via dlopen)
+RUN cp -a /app/LichtFeld-Studio/build/vcpkg_installed/x64-linux/lib/ /lichtfeld-dist/vcpkg_lib/ \
+    && echo "--- vcpkg runtime lib tree ---" && find /lichtfeld-dist/vcpkg_lib -name "*.so*" | head -40
+
+##
+## Stage 3: Runtime image (lean — no build toolchain)
+##
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
+
+ARG TARGETPLATFORM TARGETARCH TARGETOS
+ARG USERNAME=splatter-server
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Runtime-only dependencies (no compilers, no -dev headers)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        python3.12 \
+        python3.12-venv \
+        python3-pip \
+        curl \
+        zip \
+        unzip \
+        tar \
+        libglib2.0-0 \
+        libxinerama1 \
+        libxcursor1 \
+        libglu1-mesa \
+        libgl1 \
+        libxi6 \
+        libxrandr2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# SOG conversion binary
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g @playcanvas/splat-transform
+
+WORKDIR /app
+
+# Compiled binary + direct shared-lib deps
+COPY --from=lichtfeld-build /lichtfeld-dist/LichtFeld-Studio /app/LichtFeld-Studio/build/LichtFeld-Studio
+COPY --from=lichtfeld-build /lichtfeld-dist/lib/ /app/LichtFeld-Studio/build/lib/
+# vcpkg runtime libs (preserves subdirectory structure for dlopen'd plugins like nvimgcodec)
+COPY --from=lichtfeld-build /lichtfeld-dist/vcpkg_lib/ /app/LichtFeld-Studio/build/vcpkg_installed/x64-linux/lib/
+ENV LD_LIBRARY_PATH="/app/LichtFeld-Studio/build/lib:/app/LichtFeld-Studio/build/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH}"
 
 # Python environment for the new splatter pipeline
 RUN python3.12 -m venv /app/venv

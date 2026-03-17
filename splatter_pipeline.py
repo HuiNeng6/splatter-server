@@ -89,6 +89,16 @@ def stage_output(output_dir: Path, source: Path, dest_name: str) -> None:
     shutil.copy2(source, output_dir / dest_name)
 
 
+def _progress(stage: str, pct: int | None = None, detail: str = "") -> None:
+    """Print a structured progress line that the Rust runner parses."""
+    parts = [f"[PROGRESS] stage={stage}"]
+    if pct is not None:
+        parts.append(f"pct={pct}")
+    if detail:
+        parts.append(f"detail={detail}")
+    print(" ".join(parts), flush=True)
+
+
 def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bool) -> dict:
     scan_ids = discover_scan_ids(job_root)
     if not scan_ids:
@@ -130,7 +140,9 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
     dense_dir.mkdir(parents=True, exist_ok=True)
     splat_dir.mkdir(parents=True, exist_ok=True)
 
+    _progress("preprocessing", 10, "bundle adjustment")
     preprocessing.preprocess(colmap_dir, processed_dir, frames_dir=merged_frames, bundle_adjust=True)
+    _progress("preprocessing", 15, "undistorting images")
     import pycolmap
     pycolmap.undistort_images(
         output_path=str(dense_dir),
@@ -141,6 +153,7 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
     colmap_sparse = dense_dir / "sparse"
     images_dir = dense_dir / "images"
     sparsify_steps = 15000 if enable_sparsity else 0
+    _progress("training", 20, "starting gaussian splatting training")
     local_main.train_splat(
         colmap_dir=colmap_sparse,
         output_dir=splat_dir,
@@ -151,6 +164,7 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
         init_ply=None
     )
 
+    _progress("filtering", 85, "filtering gaussians")
     total_iters = iterations + sparsify_steps
     input_ply = splat_dir / f"splat_{total_iters}.ply"
     filtered_ply = splat_dir / f"splat_{total_iters}.filtered.ply"
@@ -159,9 +173,9 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
         output_ply=filtered_ply,
         colmap_path=colmap_sparse,
         overwrite=True,
-        min_opacity=-2.5,
-        max_size=0.8,
-        min_size=0.002,
+        min_opacity=-3.5,
+        max_size=10.0,
+        min_size=0.0001,
         min_view_count=5,
         view_min_depth=0.1,
         view_max_depth=3.0,
@@ -172,6 +186,7 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
     if not filtered_ply.exists():
         raise FileNotFoundError(f"filtered output missing: {filtered_ply}")
 
+    _progress("postprocessing", 90, "coordinate transform")
     vert = PlyData.read(str(filtered_ply))["vertex"].data
     vert = transform_splat_data(vert, scale=1.0, R=PRE_ROTATION_MATRIX, t=np.zeros(3))
     
@@ -179,9 +194,11 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
     output_el = PlyElement.describe(vert, "vertex")
     PlyData([output_el], text=False).write(str(rotated_ply_path))
 
+    _progress("converting", 95, "converting to .splat format")
     output_path = splat_dir / "splat_rot.splat"
     convert_splat.convert_ply_to_splat(rotated_ply_path, output_path)
 
+    _progress("done", 100)
     return {
         "scan_ids": scan_ids,
         "outputs": [str(output_path)],
@@ -203,10 +220,12 @@ def run_local_only(
     if not scan_ids:
         raise ValueError("no scans found for local mode")
 
+    _progress("preprocessing", 0, f"preparing {len(scan_ids)} scan(s)")
     for scan_id in scan_ids:
         ensure_frames_for_scan(job_root, scan_id)
         ensure_sfm_for_scan(job_root, scan_id)
 
+    _progress("training", 10, "starting local splat training")
     local_main.main(
         job_root=job_root,
         scan_ids=scan_ids,
@@ -219,6 +238,7 @@ def run_local_only(
         use_vda=False,
     )
 
+    _progress("postprocessing", 90, "staging outputs")
     output_dir = job_root / "output"
     total_iters = iterations + (15000 if enable_sparsity else 0)
     produced = []
@@ -242,6 +262,7 @@ def run_local_only(
             name = f"local_splat_ply_{scan_id}.local_splat_ply"
             stage_output(output_dir, ply_file, name)
             produced.append(name)
+    _progress("done", 100)
     return {"scan_ids": scan_ids, "outputs": produced}
 
 
@@ -259,6 +280,7 @@ def run_global_only(
     if not scan_ids:
         raise ValueError("no scans found for global mode")
 
+    _progress("combining", 0, f"combining {len(scan_ids)} local splat(s)")
     result = global_main.main(
         job_root=job_root,
         scan_ids=scan_ids,
@@ -271,6 +293,7 @@ def run_global_only(
         do_convert_sog=convert_to_sog,
     )
 
+    _progress("postprocessing", 80, "staging outputs")
     output_dir = job_root / "output"
     produced = []
     global_dir = job_root / "refined" / "global"
@@ -282,6 +305,7 @@ def run_global_only(
             if dest_name:
                 stage_output(output_dir, f, dest_name)
                 produced.append(dest_name)
+    _progress("done", 100)
     return {"scan_ids": scan_ids, "outputs": produced, "result": result}
 
 

@@ -59,6 +59,75 @@ struct DataMeta {
     domain_id: String,
 }
 
+/// Structured progress parsed from a Python `[PROGRESS]` line.
+struct PipelineProgress {
+    stage: String,
+    pct: Option<u8>,
+    detail: String,
+}
+
+/// Try to parse `[PROGRESS] stage=... pct=... detail=...` from a stdout line.
+fn parse_progress_line(line: &str) -> Option<PipelineProgress> {
+    let rest = line.strip_prefix("[PROGRESS] ")?;
+    let mut stage = String::new();
+    let mut pct: Option<u8> = None;
+    let mut detail = String::new();
+    for token in rest.split_whitespace() {
+        if let Some(v) = token.strip_prefix("stage=") {
+            stage = v.to_string();
+        } else if let Some(v) = token.strip_prefix("pct=") {
+            pct = v.parse().ok();
+        } else if let Some(v) = token.strip_prefix("detail=") {
+            detail = v.to_string();
+        } else if !detail.is_empty() {
+            detail.push(' ');
+            detail.push_str(token);
+        }
+    }
+    if stage.is_empty() {
+        return None;
+    }
+    Some(PipelineProgress { stage, pct, detail })
+}
+
+/// Try to extract training iteration progress from lines like:
+/// `Training [...] 45% [01m:30s<01m:50s] 9000/20000 | Loss: 0.0501`
+fn parse_training_progress(line: &str) -> Option<(u32, u32, f32)> {
+    if !line.contains("Training") || !line.contains('/') {
+        return None;
+    }
+    // Find the iter/total pattern: <current>/<total>
+    let mut iter_cur = None;
+    let mut iter_total = None;
+    let mut loss = None;
+    for token in line.split_whitespace() {
+        if token.contains('/') && iter_cur.is_none() {
+            let mut parts = token.split('/');
+            if let (Some(c), Some(t)) = (parts.next(), parts.next()) {
+                if let (Ok(c), Ok(t)) = (c.parse::<u32>(), t.parse::<u32>()) {
+                    iter_cur = Some(c);
+                    iter_total = Some(t);
+                }
+            }
+        }
+        if let Some(v) = token.strip_prefix("Loss:") {
+            loss = v.trim().parse::<f32>().ok();
+        }
+    }
+    // Also try token after "Loss:"
+    if loss.is_none() {
+        let parts: Vec<&str> = line.split("Loss:").collect();
+        if parts.len() > 1 {
+            loss = parts[1].trim().split_whitespace().next()
+                .and_then(|v| v.parse::<f32>().ok());
+        }
+    }
+    match (iter_cur, iter_total) {
+        (Some(c), Some(t)) => Some((c, t, loss.unwrap_or(0.0))),
+        _ => None,
+    }
+}
+
 fn tasks_cleanup_disabled() -> bool {
     match env::var("DISABLE_TASKS_CLEANUP") {
         Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
@@ -547,7 +616,7 @@ impl compute_runner_api::Runner for SplatterRunner {
 
         let use_legacy_colmap = mode == CapabilityMode::ColmapV1
             && (bool_env("SPLATTER_USE_LEGACY_COLMAP_RUN_PY", false)
-                || !bool_env("SPLATTER_ENABLE_LIGHTFELD_COLMAP", true));
+                || !bool_env("SPLATTER_ENABLE_LICHTFELD_COLMAP", true));
 
         let mut cmd_args: Vec<String> = if use_legacy_colmap {
             vec![
@@ -656,9 +725,16 @@ impl compute_runner_api::Runner for SplatterRunner {
 
         let mut stdout_reader = BufReader::new(stdout).lines();
         let mut stderr_reader = BufReader::new(stderr).lines();
-            let mut tail: VecDeque<String> = VecDeque::with_capacity(200);
+        let mut tail: VecDeque<String> = VecDeque::with_capacity(200);
+        let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        heartbeat_interval.tick().await; // consume the immediate first tick
 
-        // Read both streams concurrently to avoid deadlocks and keep logs structured.
+        let mut last_stage = String::from("starting");
+        let mut last_pct: u8 = 0;
+        let mut last_detail = String::new();
+        let mut last_progress_send = Instant::now();
+        const TRAINING_PROGRESS_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
         let mut stdout_done = false;
         let mut stderr_done = false;
         while !stdout_done || !stderr_done {
@@ -669,11 +745,59 @@ impl compute_runner_api::Runner for SplatterRunner {
                             if tail.len() == 200 { tail.pop_front(); }
                             tail.push_back(format!("stdout: {l}"));
                             info!(line = %l, "python stdout");
-                            let _ = ctx.ctrl.log_event(json!({
-                                "level": "info",
-                                "message": l,
-                                "source": "python_stdout"
-                            })).await;
+
+                            if let Some(prog) = parse_progress_line(&l) {
+                                let stage_changed = prog.stage != last_stage;
+                                last_stage = prog.stage;
+                                if !prog.detail.is_empty() { last_detail = prog.detail; }
+                                if let Some(p) = prog.pct {
+                                    if last_stage == "training" {
+                                        // Map raw training 0-100% into overall 20-85%
+                                        last_pct = (20.0 + p as f64 * 0.65).min(85.0) as u8;
+                                    } else {
+                                        last_pct = p;
+                                    }
+                                }
+
+                                let should_send = stage_changed
+                                    || last_stage != "training"
+                                    || last_progress_send.elapsed() >= TRAINING_PROGRESS_MIN_INTERVAL;
+                                if should_send {
+                                    last_progress_send = Instant::now();
+                                    let _ = ctx.ctrl.progress(json!({
+                                        "status": "processing",
+                                        "capability": self.capability,
+                                        "stage": last_stage,
+                                        "pct": last_pct,
+                                        "detail": last_detail,
+                                        "elapsed_s": start.elapsed().as_secs(),
+                                    })).await;
+                                }
+                            } else if let Some((cur, total, loss)) = parse_training_progress(&l) {
+                                let train_frac = if total > 0 { cur as f64 / total as f64 } else { 0.0 };
+                                last_pct = (20.0 + train_frac * 65.0).min(85.0) as u8;
+                                last_stage = "training".to_string();
+                                last_detail = format!("{cur}/{total} loss={loss:.4}");
+                                if last_progress_send.elapsed() >= TRAINING_PROGRESS_MIN_INTERVAL {
+                                    last_progress_send = Instant::now();
+                                    let _ = ctx.ctrl.progress(json!({
+                                        "status": "processing",
+                                        "capability": self.capability,
+                                        "stage": "training",
+                                        "pct": last_pct,
+                                        "iter": cur,
+                                        "iter_total": total,
+                                        "loss": loss,
+                                        "elapsed_s": start.elapsed().as_secs(),
+                                    })).await;
+                                }
+                            } else {
+                                let _ = ctx.ctrl.log_event(json!({
+                                    "level": "info",
+                                    "message": l,
+                                    "source": "python_stdout"
+                                })).await;
+                            }
                         }
                         Ok(None) => stdout_done = true,
                         Err(err) => {
@@ -700,6 +824,17 @@ impl compute_runner_api::Runner for SplatterRunner {
                             stderr_done = true;
                         }
                     }
+                }
+                _ = heartbeat_interval.tick() => {
+                    let elapsed = start.elapsed();
+                    let _ = ctx.ctrl.progress(json!({
+                        "status": "processing",
+                        "capability": self.capability,
+                        "stage": last_stage,
+                        "pct": last_pct,
+                        "detail": last_detail,
+                        "elapsed_s": elapsed.as_secs(),
+                    })).await;
                 }
             }
         }

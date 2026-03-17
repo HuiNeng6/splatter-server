@@ -8,7 +8,8 @@ import time
 import sys
 import shutil
 import os
-from subprocess import run
+import re
+import subprocess
 import open3d as o3d
 from preprocessing import run_bundle_adjustment, set_colmap_points_from_pointcloud, cleanup_rec_cameras
 
@@ -42,8 +43,48 @@ def run_vda_depth(colmap_dir: Path, image_root: Path, output_dir: Path, voxel_si
     ]
 
     print(f"[VDA] Running: {' '.join(cmd)}")
-    run(cmd, check=True)
+    subprocess.run(cmd, check=True)
     return output_dir / "grid_splat.ply"
+
+
+_TRAINING_RE = re.compile(
+    r"(\d+)/(\d+)"  # iter/total
+    r".*?Loss:\s*([\d.]+)"  # loss value
+)
+
+
+def _stream_training_output(proc: subprocess.Popen) -> None:
+    """Read binary stdout, split on \\r or \\n, and re-emit each fragment
+    as a full line so the Rust reader (which splits on \\n) sees them
+    individually."""
+    buf = b""
+    while True:
+        chunk = proc.stdout.read(1)
+        if not chunk:
+            break
+        if chunk in (b"\r", b"\n"):
+            if buf:
+                line = buf.decode("utf-8", errors="replace").strip()
+                buf = b""
+                if not line:
+                    continue
+                m = _TRAINING_RE.search(line)
+                if m:
+                    cur, total, loss = int(m.group(1)), int(m.group(2)), m.group(3)
+                    pct = int(cur / total * 100) if total > 0 else 0
+                    print(
+                        f"[PROGRESS] stage=training pct={pct} "
+                        f"detail={cur}/{total} loss={loss}",
+                        flush=True,
+                    )
+                else:
+                    print(line, flush=True)
+        else:
+            buf += chunk
+    if buf:
+        line = buf.decode("utf-8", errors="replace").strip()
+        if line:
+            print(line, flush=True)
 
 
 def train_splat(colmap_dir: Path, output_dir: Path, images_dir: Path = None,
@@ -62,7 +103,6 @@ def train_splat(colmap_dir: Path, output_dir: Path, images_dir: Path = None,
         "--images", os.path.abspath(str(images_dir)),
         "--config", LICHTFELD_CONFIG_VDA if init_ply is not None else LICHTFELD_CONFIG,
         "--headless",
-        #"--train"
     ]
 
     if enable_sparsity:
@@ -72,8 +112,13 @@ def train_splat(colmap_dir: Path, output_dir: Path, images_dir: Path = None,
 
     if init_ply is not None:
         cmd.extend(["--init", str(init_ply)])
-    print(f"Running command: {' '.join(cmd)}")
-    run(cmd)
+    print(f"Running command: {' '.join(cmd)}", flush=True)
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    _stream_training_output(proc)
+    ret = proc.wait()
+    if ret != 0:
+        raise subprocess.CalledProcessError(ret, cmd)
 
 def scan_main(job_root: Path, scan_id: str, iterations: int = 20000,
               enable_sparsity: bool = False, sparsify_steps: int = 15000,

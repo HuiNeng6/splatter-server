@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 from plyfile import PlyData, PlyElement
 from pycolmap import Sim3d, Rotation3d
 
@@ -109,7 +109,7 @@ def _transform_quaternions_batch(rot_0: np.ndarray, rot_1: np.ndarray,
     Operates in-place on the output arrays.
     """
     n = len(rot_0)
-    for i in numba.prange(n):
+    for i in prange(n):
         qw, qx, qy, qz = rot_0[i], rot_1[i], rot_2[i], rot_3[i]
         
         # q_new = R_quat * q
@@ -121,10 +121,6 @@ def _transform_quaternions_batch(rot_0: np.ndarray, rot_1: np.ndarray,
         out_1[i] = nx / norm
         out_2[i] = ny / norm
         out_3[i] = nz / norm
-
-
-# Need to import numba for prange
-import numba
 
 
 def parse_args() -> argparse.Namespace:
