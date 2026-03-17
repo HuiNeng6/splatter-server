@@ -15,11 +15,12 @@ splatter-server:
       cpu: 8
       memory: 32Gi
       ephemeral-storage: 128Gi
+      nvidia.com/gpu: 1
     requests:
       cpu: 6
       memory: 16Gi
       ephemeral-storage: 64Gi
   tolerations:
     - key: "dedicated"
-      value: "gpuGroup"
+      value: "karpenterGPU"
       effect: "NoSchedule"
