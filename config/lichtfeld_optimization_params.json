@@ -1,11 +1,11 @@
 {
   "iterations": 20000,
   "sh_degree_interval": 1000,
-  "means_lr": 0.000128,
-  "shs_lr": 0.0024,
-  "opacity_lr": 0.0335,
-  "scaling_lr": 0.00475,
-  "rotation_lr": 0.00083,
+  "means_lr": 0.000016,
+  "shs_lr": 0.0025,
+  "opacity_lr": 0.0250,
+  "scaling_lr": 0.005,
+  "rotation_lr": 0.001,
   "lambda_dssim": 0.2,
   "min_opacity": 0.01,
   "refine_every": 100,
@@ -51,5 +51,5 @@
   "mask_opacity_penalty_power": 2.0,
   "mask_threshold": 0.5,
   "background": "random",
-  "ppisp": true,
+  "ppisp": true
 }

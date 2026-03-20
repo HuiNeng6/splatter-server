@@ -114,9 +114,16 @@ ENV LICHTFELD_CONFIG_VDA=/app/config/lichtfeld_optimization_params_vda.json
 ENV SPLATTER_ENABLE_LICHTFELD_COLMAP=true
 ENV SPLATTER_USE_LEGACY_COLMAP_RUN_PY=false
 
+# Install sudo for runtime elevated permissions if needed
+RUN apt-get update && apt-get install -y sudo && rm -rf /var/lib/apt/lists/*
+
 # Non-root runtime: only chown directories the process actually writes to
 RUN mkdir -p /app/tasks \
     && chown -R "$USER_UID:$USER_GID" /app/tasks
+
+# Add $USER_UID as a user with sudo privileges (without password)
+RUN useradd -u "$USER_UID" -o -m user || true \
+    && echo "user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 USER $USER_UID:$USER_GID
 

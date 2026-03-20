@@ -268,7 +268,7 @@ def preprocess(
     print(rec.summary())
 
     if bundle_adjust:
-        rec = run_bundle_adjustment(rec, refine_camera_poses=True)
+        rec = run_bundle_adjustment(rec, refine_camera_poses=False)
 
     rec = cleanup_rec_cameras(rec, camera_min_3d_points, view_count_max_depth, frames_dir=frames_dir)
     rec = cleanup_rec_points(rec, point_min_view_count, view_count_max_depth)
