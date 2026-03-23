@@ -95,7 +95,7 @@ def cleanup_rec_cameras(
             if black_mask_threshold > 0:
                 mask = small_image == [0, 0, 0]
                 if np.mean(mask) > black_mask_threshold:
-                    print(f"[preprocessing] Removing image {img.name} with {np.mean(mask)}% black pixels")
+                    print(f"[preprocessing] Removing image {img.name} with {100*np.mean(mask):.1f}% black pixels")
                     frames_to_remove.append(frame_id)
                     continue
 
