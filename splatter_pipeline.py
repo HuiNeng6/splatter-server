@@ -173,9 +173,9 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
         output_ply=filtered_ply,
         colmap_path=colmap_sparse,
         overwrite=True,
-        #min_opacity=-3.5,
+        min_opacity=-2.2, # logits approx same as 0.1 alpha in 0..1 range
         #max_size=10.0,
-        #min_size=0.0001,
+        #min_size=0.001,
         min_view_count=5,
         view_min_depth=0.1,
         view_max_depth=3.0,
