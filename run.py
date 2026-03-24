@@ -226,4 +226,25 @@ if __name__ == "__main__":
     except Exception as e:
         logger.warning(f"Preview image rendering encountered error (non-fatal): {e}")
     
+    # Render preview video (best-effort, non-fatal)
+    logger.info("Rendering Preview Video")
+    try:
+        script_dir = Path(__file__).parent.resolve()
+        video_script = script_dir / "render_preview_video.py"
+        
+        if video_script.exists():
+            video_exit_code = run_python_script(
+                str(video_script),
+                "--splat_ply", args.job_root_path / "refined/splatter/splat.ply",
+                "--config_yml", args.job_root_path / "refined/splatter/splatfacto/config.yml",
+                "--output_dir", args.job_root_path / "refined/splatter",
+                "--log_level", args.log_level
+            )
+            if video_exit_code != 0:
+                logger.warning("Preview video rendering failed (non-fatal), continuing...")
+        else:
+            logger.warning(f"Preview video rendering script not found: {video_script}")
+    except Exception as e:
+        logger.warning(f"Preview video rendering encountered error (non-fatal): {e}")
+    
     sys.exit(0)

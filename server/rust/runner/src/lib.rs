@@ -867,6 +867,39 @@ impl compute_runner_api::Runner for HelloRunner {
                 }
             }
 
+            // Upload preview video if it exists (best-effort, non-fatal)
+            let preview_video = job_root.join("refined").join("splatter").join("preview.mp4");
+
+            if preview_video.exists() {
+                let video_key = if let Some(suffix) = refined_suffix.as_deref().filter(|s| !s.is_empty()) {
+                    if suffix.starts_with('_') {
+                        format!("refined_splat_preview_video{suffix}")
+                    } else {
+                        format!("refined_splat_preview_video_{suffix}")
+                    }
+                } else {
+                    "refined_splat_preview_video".to_string()
+                };
+
+                match ctx.output
+                    .put_domain_artifact(compute_runner_api::runner::DomainArtifactRequest {
+                        rel_path: video_key.as_str(),
+                        name: video_key.as_str(),
+                        data_type: "splat_preview_video",
+                        existing_id: None,
+                        content: compute_runner_api::runner::DomainArtifactContent::File(&preview_video),
+                    })
+                    .await
+                {
+                    Ok(_) => {
+                        info!(video_key = %video_key, "uploaded preview video");
+                    }
+                    Err(err) => {
+                        warn!(video_key = %video_key, %err, "failed to upload preview video (non-fatal)");
+                    }
+                }
+            }
+
             ctx.ctrl
                 .progress(json!({
                     "progress": 100,

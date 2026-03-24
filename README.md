@@ -65,6 +65,7 @@ python3 run.py \
 │       ├── splat_rot.splat # this is what needs to be uploaded to dmt
 │       ├── preview_top.png    # NEW: top-down preview image
 │       ├── preview_angle.png  # NEW: angled 3/4 view preview image
+│       ├── preview.mp4        # NEW: orbital preview video
 │       └── splatfacto
 │           └── {splat torch model}
 ```
