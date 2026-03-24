@@ -141,7 +141,7 @@ def run_colmap_single_splat(job_root: Path, iterations: int, enable_sparsity: bo
     splat_dir.mkdir(parents=True, exist_ok=True)
 
     _progress("preprocessing", 10, "bundle adjustment")
-    preprocessing.preprocess(colmap_dir, processed_dir, frames_dir=merged_frames, bundle_adjust=True)
+    preprocessing.preprocess(colmap_dir, processed_dir, frames_dir=merged_frames, bundle_adjust=False)
     _progress("preprocessing", 15, "undistorting images")
     import pycolmap
     pycolmap.undistort_images(
