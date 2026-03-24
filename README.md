@@ -63,6 +63,8 @@ python3 run.py \
 │       ├── splat.ply
 │       ├── splat_rot.ply
 │       ├── splat_rot.splat # this is what needs to be uploaded to dmt
+│       ├── preview_top.png    # NEW: top-down preview image
+│       ├── preview_angle.png  # NEW: angled 3/4 view preview image
 │       └── splatfacto
 │           └── {splat torch model}
 ```

@@ -799,11 +799,80 @@ impl compute_runner_api::Runner for HelloRunner {
                     "uploaded": upload_key.as_str(),
                 }))
                 .await;
+
+            // Upload preview images if they exist (best-effort, non-fatal)
+            let preview_top = job_root.join("refined").join("splatter").join("preview_top.png");
+            let preview_angle = job_root.join("refined").join("splatter").join("preview_angle.png");
+            let mut preview_uploaded = Vec::new();
+
+            if preview_top.exists() {
+                let preview_key = if let Some(suffix) = refined_suffix.as_deref().filter(|s| !s.is_empty()) {
+                    if suffix.starts_with('_') {
+                        format!("refined_splat_preview_top{suffix}")
+                    } else {
+                        format!("refined_splat_preview_top_{suffix}")
+                    }
+                } else {
+                    "refined_splat_preview_top".to_string()
+                };
+
+                match ctx.output
+                    .put_domain_artifact(compute_runner_api::runner::DomainArtifactRequest {
+                        rel_path: preview_key.as_str(),
+                        name: preview_key.as_str(),
+                        data_type: "splat_preview_image",
+                        existing_id: None,
+                        content: compute_runner_api::runner::DomainArtifactContent::File(&preview_top),
+                    })
+                    .await
+                {
+                    Ok(_) => {
+                        preview_uploaded.push(preview_key.clone());
+                        info!(preview_key = %preview_key, "uploaded top-down preview image");
+                    }
+                    Err(err) => {
+                        warn!(preview_key = %preview_key, %err, "failed to upload top-down preview image (non-fatal)");
+                    }
+                }
+            }
+
+            if preview_angle.exists() {
+                let preview_key = if let Some(suffix) = refined_suffix.as_deref().filter(|s| !s.is_empty()) {
+                    if suffix.starts_with('_') {
+                        format!("refined_splat_preview_angle{suffix}")
+                    } else {
+                        format!("refined_splat_preview_angle_{suffix}")
+                    }
+                } else {
+                    "refined_splat_preview_angle".to_string()
+                };
+
+                match ctx.output
+                    .put_domain_artifact(compute_runner_api::runner::DomainArtifactRequest {
+                        rel_path: preview_key.as_str(),
+                        name: preview_key.as_str(),
+                        data_type: "splat_preview_image",
+                        existing_id: None,
+                        content: compute_runner_api::runner::DomainArtifactContent::File(&preview_angle),
+                    })
+                    .await
+                {
+                    Ok(_) => {
+                        preview_uploaded.push(preview_key.clone());
+                        info!(preview_key = %preview_key, "uploaded angled preview image");
+                    }
+                    Err(err) => {
+                        warn!(preview_key = %preview_key, %err, "failed to upload angled preview image (non-fatal)");
+                    }
+                }
+            }
+
             ctx.ctrl
                 .progress(json!({
                     "progress": 100,
                     "stage": "complete",
                     "status": "succeeded",
+                    "preview_images": preview_uploaded,
                 }))
                 .await?;
 
